@@ -12,22 +12,20 @@ import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
-import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
-import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
-import org.springframework.data.mongodb.repository.config.EnableReactiveMongoRepositories;
-import org.springframework.data.redis.core.RedisHash;
-import org.springframework.data.redis.repository.configuration.EnableRedisRepositories;
-import org.springframework.stereotype.Repository;
+import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
+import org.springframework.data.redis.core.ReactiveRedisOperations;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.RedisSerializationContext;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
-import java.io.Serial;
 import java.io.Serializable;
 import java.time.Duration;
-import java.util.List;
 import java.util.UUID;
 
 import static java.lang.Thread.sleep;
@@ -45,10 +43,25 @@ public class ReactiveRedisApplication {
 
     @Bean
     ApplicationRunner applicationRunner(ArticleRepository repository) {
+
         return args -> {
+//            Article name = new Article(UUID.randomUUID().toString(), 1, "name");
             Article name = new Article(UUID.randomUUID().toString(), "name");
             repository.save(name).subscribe();
         };
+    }
+    @Bean
+    public ReactiveRedisTemplate<String, Article> reactiveJsonPostRedisTemplate(
+            ReactiveRedisConnectionFactory connectionFactory) {
+
+        RedisSerializationContext<String, Article> serializationContext = RedisSerializationContext
+                .<String, Article>newSerializationContext(new StringRedisSerializer())
+                .hashKey(new StringRedisSerializer())
+                .hashValue(new Jackson2JsonRedisSerializer<>(Article.class))
+                .build();
+
+
+        return new ReactiveRedisTemplate<>(connectionFactory, serializationContext);
     }
 }
 
@@ -60,11 +73,14 @@ public class ReactiveRedisApplication {
 class ArticleController {
 
     ArticleRepository repository;
+    ReactiveRedisOperations<String, Article> template;
+
 
     @GetMapping("all")
     public Flux<Article> getAllNoCache() throws InterruptedException {
         log.warn("Get from db");
 //        Thread.sleep(1000);
+//        return repository.findAll();
         return repository.findAll().delaySubscription(Duration.ofSeconds(1));
     }
 
@@ -73,7 +89,9 @@ class ArticleController {
     public Flux<Article> getAllCache() throws InterruptedException {
         log.warn("Get from db");
 //        Thread.sleep(1000);
-        return repository.findAll().delaySubscription(Duration.ofSeconds(1));
+//        return repository.findAll();
+        return template.<String, Article>opsForHash().values("article");
+//        return repository.findAll();
     }
 }
 
@@ -86,6 +104,11 @@ class Article implements Serializable {
     String name;
 }
 
-@Repository
 interface ArticleRepository extends ReactiveMongoRepository<Article, String> {
+    @Override
+    default Flux<Article> findAll() {
+        ReactiveRedisOperations<String, Article> template = null;
+        template.<String, Article>opsForHash().values("article");
+        return null;
+    }
 }
